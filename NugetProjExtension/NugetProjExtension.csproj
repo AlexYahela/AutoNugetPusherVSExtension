@@ -45,6 +45,8 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Commands\CMDExecute.cs" />
+    <Compile Include="Commands\Interfaces\IExecute.cs" />
     <Compile Include="Options\GitlabOptions.cs" />
     <Compile Include="Options\GithubOptions.cs" />
     <Compile Include="Options\OtherSource.cs" />

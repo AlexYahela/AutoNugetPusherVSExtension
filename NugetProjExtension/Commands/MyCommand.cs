@@ -7,16 +7,40 @@ using Microsoft.VisualStudio.Shell.Interop;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Threading;
 using NugetProjExtension.Options;
+using NugetProjExtension.Commands.Interfaces;
+using NugetProjExtension.Commands;
 
 namespace NugetProjExtension
 {
     [Command(PackageIds.MyCommand)]
     internal sealed class MyCommand : BaseCommand<MyCommand>
     {
+
+        private readonly string[] endingPathCollection = new string[]
+        {
+            "\\",
+            "\\Debug\\",
+            "\\Release\\",
+            "\\arm64\\Debug\\",
+            "\\arm64\\Release\\",
+            "\\x86\\Debug\\",
+            "\\x86\\Release\\",
+            "\\x64\\Debug\\",
+            "\\x64\\Release\\",
+        };
+
         private IVsOutputWindowPane outputWindowPane;
+        private IExecute execute;
+
+
+
 
         protected override async Task ExecuteAsync(OleMenuCmdEventArgs e)
         {
+            execute = new CMDExecute();
+            execute.Initialize();
+
+
             await Package.JoinableTaskFactory.SwitchToMainThreadAsync();
 
             var paneGuid = Guid.NewGuid();
@@ -27,7 +51,7 @@ namespace NugetProjExtension
             outputWindowPane = outputPane;
 
             outputWindowPane.Activate();
-            AddStringToOutput("Start Pushing...\n");
+            await AddStringToOutputAsync("Start Pushing...\n");
 
             //var generalSettings = await General1.GetLiveInstanceAsync();
             var project = await VS.Solutions.GetActiveProjectAsync();
@@ -38,7 +62,7 @@ namespace NugetProjExtension
             string pckgVersion = xmldoc.Document.Element("Project").Element("PropertyGroup").Element("Version").Value;
 
             //Get list of existing nuget sources
-            var nugetSourceForGithubCommandResult = execCMD("dotnet nuget list source");
+            var nugetSourceForGithubCommandResult = await execute.execCMD("dotnet nuget list source");
             var splitedString = nugetSourceForGithubCommandResult.Split('\n');
 
             var packageName = project.Name + "." + pckgVersion + ".nupkg";
@@ -52,12 +76,15 @@ namespace NugetProjExtension
 
             string nupckPushCommandWithoutSource = "dotnet nuget push " + fullPathToPackage + " --source ";
 
-            await PrepareSourceAndPush(splitedString, GithubOptions.Instance, nupckPushCommandWithoutSource);
-            await PrepareSourceAndPush(splitedString, GitlabOptions.Instance, nupckPushCommandWithoutSource);
-            await PrepareSourceAndPush(splitedString, OtherSource.Instance, nupckPushCommandWithoutSource);
+            await PrepareSourceAndPushAsync(splitedString, GithubOptions.Instance, nupckPushCommandWithoutSource);
+            await PrepareSourceAndPushAsync(splitedString, GitlabOptions.Instance, nupckPushCommandWithoutSource);
+            await PrepareSourceAndPushAsync(splitedString, OtherSource.Instance, nupckPushCommandWithoutSource);
+
+
+            execute.Dispose();
         }
 
-        private async Task PrepareSourceAndPush<T>(string[] splitedString, SourceOptions<T> generalSettings, string nupckPushCommandWithoutSource) where T : BaseOptionModel<T>, new()
+        private async Task PrepareSourceAndPushAsync<T>(string[] splitedString, SourceOptions<T> generalSettings, string nupckPushCommandWithoutSource) where T : BaseOptionModel<T>, new()
         {
             if (!generalSettings.IsUseSpecificPath) return;
 
@@ -66,28 +93,28 @@ namespace NugetProjExtension
             {
                 if (generalSettings.UserName.Trim() != string.Empty && generalSettings.PasswordToken.Trim() != string.Empty)
                 {
-                    var answer = execCMD("dotnet nuget update source " +
+                    var answer = await execute.execCMD("dotnet nuget update source " +
                         nameForConcretePath +
                         " --username " + generalSettings.UserName +
                         " --password " + generalSettings.PasswordToken);
-                    AddStringToOutput("Password and Username updated to " + nameForConcretePath);
-                    AddStringToOutput(answer);
+                    await AddStringToOutputAsync("Password and Username updated to " + nameForConcretePath);
+                    await AddStringToOutputAsync(answer);
                 }               
             }
             else
             {
-                var answer = execCMD("dotnet nuget add source " + generalSettings.SpecificPath +
+                var answer = await execute.execCMD("dotnet nuget add source " + generalSettings.SpecificPath +
                     " --name " + generalSettings.SpecificName +
                     " --username " + generalSettings.UserName +
                     " --password " + generalSettings.PasswordToken);
 
                 nameForConcretePath = generalSettings.SpecificPath;
 
-                AddStringToOutput("Added new nuget source: " + nameForConcretePath);
-                AddStringToOutput(answer);
+               await AddStringToOutputAsync("Added new nuget source: " + nameForConcretePath);
+               await AddStringToOutputAsync(answer);
             }
 
-            await PushToSource(nameForConcretePath, nupckPushCommandWithoutSource);
+            await PushToSourceAsync(nameForConcretePath, nupckPushCommandWithoutSource);
         }
 
         private string FindSourceName(string[] splitedString, string sourceIdentifaer)
@@ -109,23 +136,23 @@ namespace NugetProjExtension
             return null;
         }
 
-        private async Task PushToSource(string sourceName, string beforeSource)
+        private async Task PushToSourceAsync(string sourceName, string beforeSource)
         {
             var cmd = beforeSource + sourceName;
-            var answer = execCMD(cmd);
+            var answer = await execute.execCMD(cmd);
 
-            AddStringToOutput("Execute command: " + cmd);
+           await AddStringToOutputAsync("Execute command: " + cmd);
 
             if (answer.ToLower().Contains("error"))
             {                
                 await VS.MessageBox.ShowErrorAsync("Error Nuget Push. Command: " + 
                     cmd + "\n" +
                     answer.Substring(0, answer.IndexOf("error")));
-                AddStringToOutput(answer);
+               await AddStringToOutputAsync(answer);
             }
             else
             {
-                AddStringToOutput("Success pushing to " + sourceName);
+               await AddStringToOutputAsync("Success pushing to " + sourceName);
             }
         }
 
@@ -133,18 +160,7 @@ namespace NugetProjExtension
         private string FindPathToNugetPackage(string fullPathToProject, string packageName)
         {
             var pathToBin = fullPathToProject.Substring(0, fullPathToProject.LastIndexOf('\\')) + "\\bin";
-            var endingPathCollection = new string[]
-            {
-                "\\",
-                "\\Debug\\",
-                "\\Release\\",
-                "\\arm64\\Debug\\",
-                "\\arm64\\Release\\",
-                "\\x86\\Debug\\",
-                "\\x86\\Release\\",
-                "\\x64\\Debug\\",
-                "\\x64\\Release\\",
-            };
+         
 
             foreach (var path in endingPathCollection)
             {
@@ -158,34 +174,12 @@ namespace NugetProjExtension
             return null;
         }
 
-        private async void AddStringToOutput(string outputString)
+        private async Task AddStringToOutputAsync(string outputString)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             outputWindowPane.OutputString(outputString + "\n");
             await TaskScheduler.Default;
         }
- 
-
-        private string execCMD(string command)
-        {
-            System.Diagnostics.Process pro = new System.Diagnostics.Process();
-            pro.StartInfo.FileName = "cmd.exe";
-            pro.StartInfo.UseShellExecute = false;
-            pro.StartInfo.RedirectStandardError = true;
-            pro.StartInfo.RedirectStandardInput = true;
-            pro.StartInfo.RedirectStandardOutput = true;
-            pro.StartInfo.CreateNoWindow = true;
-            //pro.StartInfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
-            pro.Start();
-            pro.StandardInput.WriteLine(command);
-            pro.StandardInput.WriteLine("exit");
-            pro.StandardInput.AutoFlush = true;
-            //Get the output information of the cmd window
-            string output = pro.StandardOutput.ReadToEnd();
-            pro.WaitForExit();//Wait for the program to finish and exit the process
-            pro.Close();
-            return output;
-        }
-
+     
     }
 }
